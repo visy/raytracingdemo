@@ -1,0 +1,3 @@
+g++ demo.cpp pixie.cpp pixie_win.cpp -D DEMO_FULLSCREEN=true -O2 -s -lgdi32 -o demo.exe
+upx --best demo.exe
+demo.exe
