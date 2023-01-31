@@ -128,4 +128,8 @@ vec3 random_in_hemisphere(const vec3& normal) {
         return -in_unit_sphere;
 }
 
+vec3 lerp(vec3 x, vec3 y, float t) {
+  return x * (1.f - t) + y * t;
+}
+
 #endif

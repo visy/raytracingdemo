@@ -4,6 +4,8 @@
 #include "camera.h"
 #include "pixie.h"
 
+#include "bass.h"
+
 int w = 0;
 int h = 0;
 float t = 0;
@@ -31,13 +33,33 @@ color* prev;
 
 int main(int argc, char** argv)
 {
+	DWORD chan, act, level;
+	QWORD pos;
+	double secs;
+	int a, filep, device = -1;
+	BASS_CHANNELINFO info;
+
+	if (HIWORD(BASS_GetVersion()) != BASSVERSION) {
+		return 0;
+	}
+
+	if (!BASS_Init(device, 48000, 0, 0, NULL)) {
+		return 0;
+	}
+
+	chan = BASS_StreamCreateFile(FALSE, "music.wav", 0, 0, BASS_SAMPLE_FLOAT);
+	if (!chan && BASS_ErrorGetCode() == BASS_ERROR_FILEFORM) {
+		return 0;
+	}
+
+
 	Pixie::Window window;
 
 	auto aspect_ratio = 16.0 / 9.0;
-	int image_width = 256;
+	int image_width = 512;
 	int image_height = static_cast<int>(image_width / aspect_ratio);
-	int samples_per_pixel = 4;
-	int max_depth = 4;
+	int samples_per_pixel = 64;
+	int max_depth = 5;
 
 	w = image_width;
 	h = image_height;
@@ -54,10 +76,15 @@ int main(int argc, char** argv)
 	// cam
 	camera cam;
 	
+
 	if (!window.Open("Demo or die", w, h, DEMO_FULLSCREEN)) 
 	{
 		return 0;
 	}
+	
+	BASS_ChannelPlay(chan, FALSE);
+
+	int gridsize = 16;
 
 	while (!window.HasKeyGoneUp(Pixie::Key_Escape))
 	{
@@ -69,29 +96,26 @@ int main(int argc, char** argv)
 				
 		float scale = 1.0 / samples_per_pixel;
 
-
-		#pragma omp parallel for ordered schedule(dynamic)
-		for(int i=0;i<w*h;i++) 
+		#pragma omp for
+		for(int y=0;y<h;y+=gridsize) 
 		{
-			color pixel(0,0,0);
-
-			int x = i % w;
-			int y = i / w;
-
-			for (int s = 0;s < samples_per_pixel; s++) 
+			for(int x=0;x<w;x+=gridsize) 
 			{
-				auto u = (x+random_double()) / (w-1);
-				auto v = ((h-y)+random_double()) / (h-1);
-				ray r = cam.get_ray(u,v);
-				pixel += ray_color(r, world, max_depth, color(0,0,0));
-			}
+				int i = y*w+x;
 
-			pixel = (pixel + prev[i])*vec3(0.5,0.5,0.5);
+				color pixel(0,0,0);
 
-			prev[i] = pixel;
+				for (int s = 0;s < samples_per_pixel; s++) 
+				{
+					auto u = (x+random_double()) / (w-1);
+					auto v = ((h-y)+random_double()) / (h-1);
+					ray r = cam.get_ray(u,v);
+					pixel += ray_color(r, world, max_depth, color(0,0,0));
+				}
+	
+				pixel = (pixel + prev[i])*vec3(0.5,0.5,0.5);
+				prev[i] = pixel;
 
-			#pragma omp ordered
-			{
 				int r = sqrt(pixel.x()*scale)*255; 
 				int g = sqrt(pixel.y()*scale)*255; 
 				int b = sqrt(pixel.z()*scale)*255; 
@@ -100,13 +124,42 @@ int main(int argc, char** argv)
 			}
 		}
 
-		cam.origin.z(-0.25+cos(t*0.0002)*0.22);
+		#pragma omp for
+		for(int y=0;y<h-gridsize;y+=gridsize) 
+		{
+			for(int x=0;x<w-gridsize;x+=gridsize)
+			{
+				color sample = prev[y*w+x];
+				
+				color sample2;
 
+				for(int y2=1;y2<gridsize+1;y2+=1)
+				{
+					for(int x2=1;x2<gridsize+1;x2+=1)
+					{
+						if (y+gridsize < h) {
+							sample2	= prev[(y+y2)*w+(x+x2)];
+						}
+						int i = ((y+y2)*w)+(x+x2);
+						color pixel = lerp(sample,sample2,(x2-1)/((float)gridsize));
+
+						int r = sqrt(pixel.x()*scale)*255; 
+						int g = sqrt(pixel.y()*scale)*255; 
+						int b = sqrt(pixel.z()*scale)*255; 
+
+						pixels[i] = MAKE_RGB(r,g,b);
+					}
+				}
+			}
+		}
+		cam.origin.z(-0.25+cos(t*0.005)*0.32);
+		
 		if (!window.Update())
 		{
 			break;
 		}
 	}
 
+	BASS_Free();
 	window.Close();
 }
