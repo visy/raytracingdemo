@@ -126,6 +126,31 @@ color* prev;
 uint32_t* raytraced;
 
 int fe,xo,yo = 0;
+hittable_list world;
+point3 lookfrom(-2,2,1);
+point3 lookat(0,0,-1);
+int xres = 1280;
+int yres = 720;
+auto aspect_ratio = 16.0 / 9.0;
+int image_width = 360;
+int max_depth = 2;
+
+camera cam(lookfrom, lookat, vec3(0,1,0), 45, aspect_ratio);
+	
+int samples_per_pixel = 16;
+
+color render_samples(int x, int y, int w, int h) {
+	color pixel(0,0,0);
+	for (int i = 0; i < samples_per_pixel; i++) {
+	auto u = (x+random_double()) / (w-1);
+	auto v = ((h-y)+random_double()) / (h-1);
+	ray r = cam.get_ray(u,v);
+	pixel += ray_color(r, world, max_depth, color(0,0,0));
+	}
+
+	return pixel;
+}
+
 
 int main(int argc, char** argv)
 {
@@ -151,13 +176,7 @@ int main(int argc, char** argv)
 
 	Pixie::Window window;
 
-	int xres = 1920;
-	int yres = 1080;
-	auto aspect_ratio = 16.0 / 9.0;
-	int image_width = 360;
 	int image_height = static_cast<int>(image_width / aspect_ratio);
-	int samples_per_pixel = 4;
-	int max_depth = 2;
 
 	w = image_width;
 	h = image_height;
@@ -167,17 +186,12 @@ int main(int argc, char** argv)
 	raytraced = (uint32_t*)malloc(w*h*sizeof(uint32_t));
 
 	// world
-	hittable_list world;
 	world.add(make_shared<sphere>(point3(0,0,-1), 0.7, color(0.7,0.5,0.0)));
 	world.add(make_shared<sphere>(point3(0.75,0,-1), 0.6, color(1.0,0.0,0.0)));
 	world.add(make_shared<sphere>(point3(-0.75,0,-1), 0.5, color(0.0,1.0,1.0)));
 	world.add(make_shared<sphere>(point3(0,-100.5,-1), 100, color(0.0,0.0,1.0)));
 
-	point3 lookfrom(-2,2,1);
-	point3 lookat(0,0,-1);
-
 	// cam
-	camera cam(lookfrom, lookat, vec3(0,1,0), 45, aspect_ratio);
 	
 
 	if (!window.Open("Demo or die", xres, yres, DEMO_FULLSCREEN)) 
@@ -223,7 +237,7 @@ int main(int argc, char** argv)
 
 		fe = fe % 4;
 
-		#pragma omp for
+		#pragma omp parallel for collapse(2)
 		for(int y=yo;y<h;y+=2) 
 		{
 			for(int x=xo;x<w;x+=2)
@@ -232,13 +246,7 @@ int main(int argc, char** argv)
 
 				color pixel(0,0,0);
 
-				for (int s = 0;s < samples_per_pixel; s++) 
-				{
-					auto u = (x+random_double()) / (w-1);
-					auto v = ((h-y)+random_double()) / (h-1);
-					ray r = cam.get_ray(u,v);
-					pixel += ray_color(r, world, max_depth, color(0,0,0));
-				}
+				pixel = render_samples(x,y,w,h);
 	
 				pixel = (pixel + prev[i])*vec3(0.5,0.5,0.5);
 				prev[i] = pixel;

@@ -1,0 +1,1 @@
+g++ smol.cpp pixie.cpp pixie_win.cpp -D DEMO_FULLSCREEN=false -lgdi32 -MD -Os -s -o smol.exe
