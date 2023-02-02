@@ -14,7 +14,6 @@ class camera {
         ) {
 		up = vup;
 		fov = vfov;
-		ratio = aspect_ratio;
 		set_transform(lookfrom,lookat);
         }
 
@@ -26,7 +25,7 @@ class camera {
 		auto theta = degrees_to_radians(fov);
 		auto h = tan(theta/2);
 		auto viewport_height = 2.0 * h;
-		auto viewport_width = ratio * viewport_height;
+		auto viewport_width = aspect_ratio * viewport_height;
 
 		auto w = unit_vector(from - at);
 		auto u = unit_vector(cross(up, w));
@@ -45,6 +44,5 @@ class camera {
         point3 lower_left_corner;
         vec3 horizontal;
         vec3 vertical;
-	double ratio;
 };
 #endif

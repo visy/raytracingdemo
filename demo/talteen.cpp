@@ -29,7 +29,7 @@ color ray_color(const ray& r, const hittable& world, int depth, color c)
 	return (1.0-t)*color(1.0, 1.0, 1.0) + t*c;
 }
 
-void bilinear(uint32_t* pd, uint32_t* pixels, int widthSource, int heightSource, int width, int height)
+void bilinear(uint32_t* pd, uint32_t* pixels, int widthSource, int heightSource, int width, int height, byte* baseImage)
 {
     float xs = (float)widthSource / width;
     float ys = (float)heightSource / height;
@@ -96,7 +96,11 @@ void bilinear(uint32_t* pd, uint32_t* pixels, int widthSource, int heightSource,
             // Alpha
             l0 = ifracx * c1a + fracx * c2a;
             l1 = ifracx * c3a + fracx * c4a;
+            a = (byte)(ifracy * l0 + fracy * l1);
 
+            // Write destination
+            if (a > 0)
+            {
                 // Red
                 l0 = ifracx * c1r + fracx * c2r;
                 l1 = ifracx * c3r + fracx * c4r;
@@ -113,19 +117,23 @@ void bilinear(uint32_t* pd, uint32_t* pixels, int widthSource, int heightSource,
                 bf = ifracy * l0 + fracy * l1;
 
                 // Cast to byte
-                r = (byte)((rf));
-                g = (byte)((gf));
-                b = (byte)((bf));
+                float alpha = a / 255.0f;
+                r = (byte)((rf * alpha) + (baseImage[srcIdx] * (1.0f - alpha)));
+                g = (byte)((gf * alpha) + (baseImage[srcIdx] * (1.0f - alpha)));
+                b = (byte)((bf * alpha) + (baseImage[srcIdx] * (1.0f - alpha)));
 
-                pd[srcIdx++] = MAKE_RGB(r,g,b);
+                pd[srcIdx++] = (255 << 24) | (r << 16) | (g << 8) | b;
+            }
+            else
+            {
+                // Alpha, Red, Green, Blue                          
+                pd[srcIdx++] = (255 << 24) | (baseImage[srcIdx] << 16) | (baseImage[srcIdx] << 8) | baseImage[srcIdx];
+            }
         }
     }
 }
 
 color* prev;
-uint32_t* raytraced;
-
-int fe,xo,yo = 0;
 
 int main(int argc, char** argv)
 {
@@ -151,36 +159,30 @@ int main(int argc, char** argv)
 
 	Pixie::Window window;
 
-	int xres = 1920;
-	int yres = 1080;
 	auto aspect_ratio = 16.0 / 9.0;
-	int image_width = 360;
+	int image_width = 512;
 	int image_height = static_cast<int>(image_width / aspect_ratio);
-	int samples_per_pixel = 4;
-	int max_depth = 2;
+	int samples_per_pixel = 16;
+	int max_depth = 5;
+	int gridsize = 3;
 
 	w = image_width;
 	h = image_height;
 
 	prev = (color*)malloc(w*h*sizeof(color));
 
-	raytraced = (uint32_t*)malloc(w*h*sizeof(uint32_t));
-
 	// world
 	hittable_list world;
-	world.add(make_shared<sphere>(point3(0,0,-1), 0.7, color(0.7,0.5,0.0)));
-	world.add(make_shared<sphere>(point3(0.75,0,-1), 0.6, color(1.0,0.0,0.0)));
-	world.add(make_shared<sphere>(point3(-0.75,0,-1), 0.5, color(0.0,1.0,1.0)));
+	world.add(make_shared<sphere>(point3(0,0,-1), 0.4, color(0.7,0.5,0.0)));
+	world.add(make_shared<sphere>(point3(0.75,0,-1), 0.4, color(1.0,0.0,0.0)));
+	world.add(make_shared<sphere>(point3(-0.75,0,-1), 0.4, color(0.0,1.0,1.0)));
 	world.add(make_shared<sphere>(point3(0,-100.5,-1), 100, color(0.0,0.0,1.0)));
 
-	point3 lookfrom(-2,2,1);
-	point3 lookat(0,0,-1);
-
 	// cam
-	camera cam(lookfrom, lookat, vec3(0,1,0), 45, aspect_ratio);
+	camera cam;
 	
 
-	if (!window.Open("Demo or die", xres, yres, DEMO_FULLSCREEN)) 
+	if (!window.Open("Demo or die", w, h, DEMO_FULLSCREEN)) 
 	{
 		return 0;
 	}
@@ -198,35 +200,10 @@ int main(int argc, char** argv)
 				
 		float scale = 1.0 / samples_per_pixel;
 
-		if (fe == 0) 
-		{
-			xo = 0;
-			yo = 0;
-		}
-		if (fe == 1) 
-		{
-			xo = 1;
-			yo = 1;
-		}
-		if (fe == 2) 
-		{
-			xo = 0;
-			yo = 1;
-		}
-		if (fe == 3) 
-		{
-			xo = 1;
-			yo = 0;
-		}
-
-		fe++;
-
-		fe = fe % 4;
-
 		#pragma omp for
-		for(int y=yo;y<h;y+=2) 
+		for(int y=0;y<h;y+=gridsize) 
 		{
-			for(int x=xo;x<w;x+=2)
+			for(int x=0;x<w;x+=gridsize) 
 			{
 				int i = y*w+x;
 
@@ -242,21 +219,37 @@ int main(int argc, char** argv)
 	
 				pixel = (pixel + prev[i])*vec3(0.5,0.5,0.5);
 				prev[i] = pixel;
-				int r = sqrt(pixel.x()*scale)*255; 
-				int g = sqrt(pixel.y()*scale)*255; 
-				int b = sqrt(pixel.z()*scale)*255; 
-				raytraced[i] = MAKE_RGB(r,g,b);
 			}
 		}
 
-		bilinear(pixels,raytraced,w,h,xres,yres);
+		#pragma omp for
+		for(int y=0;y<h-gridsize;y+=gridsize) 
+		{
+			for(int x=0;x<w-gridsize;x+=gridsize)
+			{
+				color sample = prev[y*w+x];
+				
+				color sample2;
 
-		float o = cos(t*0.001)*3.14;
-		float o2 = abs(sin(t*0.001)*1);
-		lookfrom.x(o);
-		lookfrom.z(o2);
+				for(int y2=1;y2<gridsize+1;y2+=1)
+				{
+					for(int x2=1;x2<gridsize+1;x2+=1)
+					{
+						if (y+gridsize < h) {
+							sample2	= prev[(y+y2)*w+(x+x2)];
+						}
+						int i = ((y+y2)*w)+(x+x2);
+						color pixel = lerp(sample,sample2,(x2-1)/((float)gridsize));
 
-		cam.set_transform(lookfrom,lookat);
+						int r = sqrt(pixel.x()*scale)*255; 
+						int g = sqrt(pixel.y()*scale)*255; 
+						int b = sqrt(pixel.z()*scale)*255; 
+
+						pixels[i] = MAKE_RGB(r,g,b);
+					}
+				}
+			}
+		}
 //		cam.origin.z(-025+cos(t*0.005)*0.32);
 		
 		if (!window.Update())
