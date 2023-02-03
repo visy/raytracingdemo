@@ -56,6 +56,12 @@ class vec3 {
             return e[0]*e[0] + e[1]*e[1] + e[2]*e[2];
         }
 
+	bool near_zero() const {
+		// Return true if the vector is close to zero in all dimensions.
+		const auto s = 1e-8;
+		return (fabs(e[0]) < s) && (fabs(e[1]) < s) && (fabs(e[2]) < s);
+	}
+
     public:
         double e[3];
 };
@@ -132,22 +138,9 @@ vec3 lerp(vec3 x, vec3 y, float t) {
   return x * (1.f - t) + y * t;
 }
 
-inline float 
-interpolate(float q11, float q12, float q21, float q22, float x1, float x2, float y1, float y2, float x, float y) 
-{
-    float x2x1, y2y1, x2x, y2y, yy1, xx1;
-    x2x1 = x2 - x1;
-    y2y1 = y2 - y1;
-    x2x = x2 - x;
-    y2y = y2 - y;
-    yy1 = y - y1;
-    xx1 = x - x1;
-    return 1.0 / (x2x1 * y2y1) * (
-        q11 * x2x * y2y +
-        q21 * xx1 * y2y +
-        q12 * x2x * yy1 +
-        q22 * xx1 * yy1
-    );
+vec3 reflect(const vec3& v, const vec3& n) {
+    return v - 2*dot(v,n)*n;
 }
+
 
 #endif
