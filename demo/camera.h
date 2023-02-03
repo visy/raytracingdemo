@@ -37,6 +37,22 @@ class camera {
 		vertical = viewport_height * v;
 		lower_left_corner = origin - horizontal/2 - vertical/2 - w;	
 	}
+	void set_transform(point3 from, point3 at, float newfov) {
+		fov = newfov;
+		auto theta = degrees_to_radians(newfov);
+		auto h = tan(theta/2);
+		auto viewport_height = 2.0 * h;
+		auto viewport_width = ratio * viewport_height;
+
+		auto w = unit_vector(from - at);
+		auto u = unit_vector(cross(up, w));
+		auto v = cross(w, u);
+
+		origin = from;
+		horizontal = viewport_width * u;
+		vertical = viewport_height * v;
+		lower_left_corner = origin - horizontal/2 - vertical/2 - w;	
+	}
 
     private:
 	double fov;
