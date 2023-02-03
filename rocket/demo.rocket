@@ -1,0 +1,94 @@
+<sync rows="1024">
+	<tracks>
+		<track name="clear.r">
+			<key row="0" interpolation="0" value="1"/>
+			<key row="664" interpolation="0" value="0"/>
+			<key row="791" interpolation="0" value="1"/>
+			<key row="803" interpolation="0" value="1"/>
+			<key row="820" interpolation="0" value="1"/>
+			<key row="1016" interpolation="0" value="0"/>
+			<key row="1020" interpolation="0" value="1"/>
+			<key row="1023" interpolation="0" value="1"/>
+		</track>
+		<track name="clear.g">
+			<key row="0" interpolation="0" value="1"/>
+			<key row="664" interpolation="0" value="0"/>
+			<key row="791" interpolation="0" value="1"/>
+			<key row="803" interpolation="0" value="2"/>
+			<key row="820" interpolation="0" value="1"/>
+			<key row="992" interpolation="0" value="0"/>
+			<key row="1016" interpolation="0" value="1"/>
+			<key row="1023" interpolation="0" value="1"/>
+		</track>
+		<track name="clear.b">
+			<key row="0" interpolation="0" value="1"/>
+			<key row="791" interpolation="0" value="0"/>
+			<key row="803" interpolation="0" value="2"/>
+			<key row="820" interpolation="0" value="1"/>
+			<key row="992" interpolation="0" value="0"/>
+			<key row="1016" interpolation="0" value="1"/>
+			<key row="1023" interpolation="0" value="1"/>
+		</track>
+		<track name="from.x">
+			<key row="0" interpolation="1" value="4"/>
+			<key row="159" interpolation="0" value="5"/>
+			<key row="480" interpolation="0" value="4"/>
+			<key row="512" interpolation="1" value="4"/>
+			<key row="663" interpolation="0" value="8"/>
+			<key row="845" interpolation="1" value="8"/>
+			<key row="957" interpolation="0" value="0"/>
+		</track>
+		<track name="from.y">
+			<key row="0" interpolation="1" value="5"/>
+			<key row="479" interpolation="0" value="9.6"/>
+			<key row="480" interpolation="0" value="1"/>
+			<key row="600" interpolation="0" value="1"/>
+			<key row="677" interpolation="1" value="1"/>
+			<key row="757" interpolation="1" value="10"/>
+			<key row="957" interpolation="1" value="2"/>
+			<key row="1023" interpolation="0" value="5"/>
+		</track>
+		<track name="from.z">
+			<key row="0" interpolation="1" value="12"/>
+			<key row="479" interpolation="0" value="0.75"/>
+			<key row="480" interpolation="0" value="0"/>
+			<key row="511" interpolation="1" value="0"/>
+			<key row="757" interpolation="1" value="15"/>
+			<key row="957" interpolation="0" value="0"/>
+		</track>
+		<track name="at.x">
+			<key row="0" interpolation="0" value="0"/>
+			<key row="480" interpolation="1" value="0"/>
+			<key row="600" interpolation="1" value="-4"/>
+			<key row="608" interpolation="1" value="-5"/>
+			<key row="663" interpolation="1" value="-6"/>
+			<key row="957" interpolation="0" value="5"/>
+		</track>
+		<track name="at.y">
+			<key row="0" interpolation="0" value="0"/>
+			<key row="480" interpolation="1" value="0"/>
+			<key row="511" interpolation="1" value="-2"/>
+			<key row="957" interpolation="1" value="0"/>
+			<key row="1023" interpolation="0" value="-8"/>
+		</track>
+		<track name="at.z">
+			<key row="0" interpolation="0" value="0"/>
+			<key row="480" interpolation="1" value="0"/>
+			<key row="957" interpolation="0" value="5"/>
+		</track>
+		<track name="fov">
+			<key row="0" interpolation="1" value="1"/>
+			<key row="511" interpolation="0" value="45"/>
+			<key row="566" interpolation="1" value="45"/>
+			<key row="678" interpolation="1" value="15"/>
+			<key row="957" interpolation="0" value="45"/>
+		</track>
+		<track name="effu1">
+			<key row="0" interpolation="1" value="0"/>
+			<key row="511" interpolation="0" value="10000"/>
+			<key row="548" interpolation="1" value="10000"/>
+			<key row="708" interpolation="0" value="20000"/>
+		</track>
+	</tracks>
+	<bookmarks/>
+</sync>
