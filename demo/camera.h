@@ -10,17 +10,32 @@ class camera {
 		point3 lookat,
 		vec3 vup,	
 		double vfov, // vertical field-of-view in degrees
-		double aspect_ratio
+		double aspect_ratio,
+		double _aperture,
+		double focus_dist,
+		double _time0 = 0,
+		double _time1 = 0
         ) {
 		up = vup;
 		fov = vfov;
 		ratio = aspect_ratio;
+		fdist = focus_dist;
+		aperture = _aperture;
+		time0 = _time0;
+		time1 = _time1;
 		set_transform(lookfrom,lookat);
         }
 
         ray get_ray(double s, double t) const {
-            return ray(origin, lower_left_corner + s*horizontal + t*vertical - origin);
-        }
+	    vec3 rd = lens_radius * random_in_unit_disk();
+            vec3 offset = u * rd.x() + v * rd.y();
+
+            return ray(
+                origin + offset,
+                lower_left_corner + s*horizontal + t*vertical - origin - offset,
+                random_double(time0, time1)
+            );
+	}
 
 	void set_transform(point3 from, point3 at) {
 		auto theta = degrees_to_radians(fov);
@@ -28,14 +43,15 @@ class camera {
 		auto viewport_height = 2.0 * h;
 		auto viewport_width = ratio * viewport_height;
 
-		auto w = unit_vector(from - at);
-		auto u = unit_vector(cross(up, w));
-		auto v = cross(w, u);
+		w = unit_vector(from - at);
+		u = unit_vector(cross(up, w));
+		v = cross(w, u);
 
 		origin = from;
-		horizontal = viewport_width * u;
-		vertical = viewport_height * v;
-		lower_left_corner = origin - horizontal/2 - vertical/2 - w;	
+		horizontal = fdist * viewport_width * u;
+		vertical = fdist * viewport_height * v;
+		lower_left_corner = origin - horizontal/2 - vertical/2 - fdist*w;
+		lens_radius = aperture / 2;
 	}
 	void set_transform(point3 from, point3 at, float newfov) {
 		fov = newfov;
@@ -44,14 +60,14 @@ class camera {
 		auto viewport_height = 2.0 * h;
 		auto viewport_width = ratio * viewport_height;
 
-		auto w = unit_vector(from - at);
-		auto u = unit_vector(cross(up, w));
-		auto v = cross(w, u);
+		w = unit_vector(from - at);
+		u = unit_vector(cross(up, w));
+		v = cross(w, u);
 
 		origin = from;
-		horizontal = viewport_width * u;
-		vertical = viewport_height * v;
-		lower_left_corner = origin - horizontal/2 - vertical/2 - w;	
+		horizontal = fdist * viewport_width * u;
+		vertical = fdist * viewport_height * v;
+		lower_left_corner = origin - horizontal/2 - vertical/2 - fdist*w;	
 	}
 
     private:
@@ -61,6 +77,10 @@ class camera {
         point3 lower_left_corner;
         vec3 horizontal;
         vec3 vertical;
+	vec3 u,v,w;
 	double ratio;
+	double lens_radius;
+	double time0,time1,fdist;
+	double aperture;
 };
 #endif

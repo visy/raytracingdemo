@@ -3,8 +3,8 @@
 #include "sphere.h"
 #include "camera.h"
 #include "material.h"
+#include "bvh.h"
 #include "pixie.h"
-
 #include "bass.h"
 #include "sync.h"
 
@@ -19,7 +19,7 @@ static double bass_get_row(HSTREAM h)
 	return time * row_rate;
 }
 
-//#define SYNC_PLAYER
+#define SYNC_PLAYER
 
 #ifndef SYNC_PLAYER
 
@@ -187,11 +187,13 @@ int xres = 1280;
 int yres = 720;
 auto aspect_ratio = 16.0 / 9.0;
 int image_width = 360;
-int max_depth = 4;
-
-camera cam(lookfrom, lookat, vec3(0,1,0), 75, aspect_ratio);
-	
+int max_depth = 3;
+float aperture = 0.0;
+float dist_to_focus = 10.0;
 int samples_per_pixel = 8;
+
+camera cam(lookfrom, lookat, vec3(0,1,0), 75, aspect_ratio, aperture, dist_to_focus, 0.0, 1.0);
+	
 
 color render_samples(int x, int y, int w, int h) {
 	color pixel(0,0,0);
@@ -205,6 +207,34 @@ color render_samples(int x, int y, int w, int h) {
 	return pixel;
 }
 
+hittable_list final_scene() {
+	auto material_center = make_shared<lambertian>(color(0.8, 0.3, 0.3));
+	auto material_left   = make_shared<dielectric>(1.5);
+
+	auto checker = make_shared<checker_texture>(color(0.2, 0.3, 0.1), color(0.9, 0.2, 0.9));
+
+	hittable_list spheres;
+
+ 	spheres.add(make_shared<sphere>(point3( 0.0, -100.5, -1.0), 100.0, make_shared<lambertian>(checker)));
+
+	float ss = 1;
+	float xxo = -4;
+	float yyo = -4;
+    for (int yy = 0; yy < 8; yy++) {
+	    for (int xx = 0; xx < 8; xx++) {
+			 float re = cos((xx+yy)*0.5)*0.2;
+			 float ge = sin((xx+yy)*0.1)*0.3;
+			 float be = cos((xx+yy)*0.2)*0.1;
+		auto material_right  = make_shared<metal>(color(0.5-re,0.5-ge,0.5-be));
+		spheres.add(make_shared<sphere>(point3( xxo+xx*ss,    0.0, yyo+yy*ss),   0.5, material_right));
+	    }
+    }
+
+        hittable_list objects;
+    objects.add(make_shared<bvh_node>(spheres, 0, 1));
+
+    return objects;
+}
 
 int main(int argc, char** argv)
 {
@@ -261,25 +291,7 @@ int main(int argc, char** argv)
 
 	// world
 	//
-	
-
-    auto material_ground = make_shared<lambertian>(color(0.2, 0.7, 0.2));
-    auto material_center = make_shared<lambertian>(color(0.8, 0.3, 0.3));
-    auto material_left   = make_shared<dielectric>(1.5);
-
-    world.add(make_shared<sphere>(point3( 0.0, -100.5, -1.0), 100.0, material_ground));
-	float ss = 1;
-	float xxo = -4;
-	float yyo = -4;
-    for (int yy = 0; yy < 8; yy++) {
-	    for (int xx = 0; xx < 8; xx++) {
-		 float re = cos(xx+yy+t*0.005)*0.2;
-		 float ge = sin(xx+yy+t*0.001)*0.3;
-		 float be = cos(xx+yy+t*0.002)*0.1;
-    		auto material_right  = make_shared<metal>(color(0.7-re, 0.2+ge, 0.8-be));
-		world.add(make_shared<sphere>(point3( xxo+xx*ss,    0.0, yyo+yy*ss),   0.5, material_right));
-	    }
-    }
+	world=final_scene();
 
 
 
@@ -365,6 +377,7 @@ int main(int argc, char** argv)
 		int i = 0;
 		 for (auto obu : world.objects) {
 			 i++;
+			 if (i == 1) continue;
 			 float re = cos(i+cyc*0.005)*0.2;
 			 float ge = sin(i+cyc*0.001)*0.3;
 			 float be = cos(i+cyc*0.002)*0.1;

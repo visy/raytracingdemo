@@ -1,3 +1,2 @@
-g++ -s -Os -fdata-sections -ffunction-sections -fipa-pta demo.cpp pixie.cpp pixie_win.cpp -D DEMO_FULLSCREEN=true -Os -s -lbass -lgdi32 -o demo.exe
-strip -g demo.exe
+g++ demo.cpp pixie.cpp pixie_win.cpp device.c track.c -lwsock32 -lws2_32 -fpermissive -D DEMO_FULLSCREEN=false -lgdi32 -fopenmp -lbass -O2 -s -o demo.exe
 demo.exe
