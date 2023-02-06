@@ -4,9 +4,13 @@
 #include "camera.h"
 #include "material.h"
 #include "bvh.h"
+#include "pdf.h"
 #include "pixie.h"
 #include "bass.h"
 #include "sync.h"
+
+#include <omp.h>
+#include <time.h>
 
 static const float bpm = 150.0f; /* beats per minute */
 static const int rpb = 8; /* rows per beat */
@@ -60,7 +64,7 @@ int h = 0;
 float t = 0;
 float c_r,c_g,c_b=1;
 
-color ray_color(const ray& r, const hittable& world, int depth) 
+color ray_color(const ray& r, const shared_ptr<texture>& background, const shared_ptr<pdf>& background_pdf, const hittable& world, const shared_ptr<hittable>& lights, int depth) 
 {
 	hit_record rec;
 
@@ -69,18 +73,34 @@ color ray_color(const ray& r, const hittable& world, int depth)
 		return color(0,0,0);
 	}
 
-	if (world.hit(r, 0.001, infinity, rec)) 
-	{
-		ray scattered;
-		color attenuation;
-	        if (rec.mat_ptr->scatter(r, rec, attenuation, scattered))
-	            return attenuation * ray_color(scattered, world, depth-1);
-        	
-		return color(0,0,0);
+	if(!world.hit(r, 0.000001, infinity, rec)){
+		auto unit_dir = unit_vector(r.direction());
+		double u, v; get_spherical_uv(unit_dir, u, v);
+		return background->value(u, v, unit_dir);
 	}
-	vec3 unit_direction = unit_vector(r.direction());
-	auto t = 0.7*(unit_direction.y() + 1.0);
-	return (1.0-t)*color(1.0, 1.0, 1.0) + t*color(c_r, c_g, c_b);
+
+	scatter_record srec;
+	color emitted = rec.mat_ptr->emitted(r, rec, rec.u, rec.v, rec.p);
+
+	if (!rec.mat_ptr->scatter(r, rec, srec)){
+		return emitted;
+	}
+
+	// no importance sampling
+	if (srec.is_specular){
+		return srec.attenuation * ray_color(srec.specular_ray, background, background_pdf, world, lights, depth-1);
+	}
+
+	auto light_ptr = make_shared<hittable_pdf>(lights, rec.p);
+	mixture_pdf p_objs(light_ptr, srec.pdf_ptr, 0.5);
+	mixture_pdf p(make_shared<mixture_pdf>(p_objs), background_pdf, 0.8);
+
+	ray scattered = ray(rec.p, p.generate(), r.time());
+	auto pdf_val = p.value(scattered.direction());
+
+	return emitted + 
+	srec.attenuation * rec.mat_ptr->scattering_pdf(r, rec, scattered)
+			 * ray_color(scattered, background, background_pdf, world, lights, depth-1) / pdf_val;
 }
 
 void bilinear(uint32_t* pd, uint32_t* pixels, int widthSource, int heightSource, int width, int height)
@@ -181,27 +201,32 @@ uint32_t* raytraced;
 
 int fe,xo,yo = 0;
 hittable_list world;
+shared_ptr<hittable_list> lights;
 point3 lookfrom(-2,2,5);
 point3 lookat(0,0,-1);
 int xres = 1280;
 int yres = 720;
 auto aspect_ratio = 16.0 / 9.0;
 int image_width = 360;
-int max_depth = 3;
+int max_depth = 6;
 float aperture = 0.0;
 float dist_to_focus = 10.0;
-int samples_per_pixel = 6;
+int samples_per_pixel = 8;
 
 camera cam(lookfrom, lookat, vec3(0,1,0), 75, aspect_ratio, aperture, dist_to_focus, 0.0, 1.0);
-	
+
+shared_ptr<texture> background;
+shared_ptr<pdf> background_pdf;	
 
 color render_samples(int x, int y, int w, int h) {
 	color pixel(0,0,0);
 	for (int i = 0; i < samples_per_pixel; i++) {
-	auto u = (x+random_double()) / (w-1);
-	auto v = ((h-y)+random_double()) / (h-1);
-	ray r = cam.get_ray(u,v);
-	pixel += ray_color(r, world, max_depth);
+		auto u = (x+random_double()) / (w-1);
+		auto v = ((h-y)+random_double()) / (h-1);
+		ray r = cam.get_ray(u,v);
+		color ray_contrib = ray_color(r, background, background_pdf, world, lights, max_depth);
+		zero_nan_vals(ray_contrib);
+		pixel += ray_contrib;
 	}
 
 	return pixel;
@@ -215,7 +240,7 @@ hittable_list final_scene() {
 
 	hittable_list spheres;
 
- 	spheres.add(make_shared<sphere>(point3( 0.0, -100.5, -1.0), 100.0, make_shared<lambertian>(checker)));
+// 	spheres.add(make_shared<sphere>(point3( 0.0, -100.5, -1.0), 100.0, make_shared<lambertian>(checker)));
 
 	float ss = 1;
 	float xxo = -4;
@@ -225,7 +250,8 @@ hittable_list final_scene() {
 			 float re = cos((xx+yy)*0.5)*0.2;
 			 float ge = sin((xx+yy)*0.1)*0.3;
 			 float be = cos((xx+yy)*0.2)*0.1;
-		auto material_right  = make_shared<metal>(color(0.5-re,0.5-ge,0.5-be));
+			 auto fuzz = random_double(0, 0.5);
+		auto material_right  = make_shared<metal>(color(0.5-re,0.5-ge,0.5-be), fuzz);
 		spheres.add(make_shared<sphere>(point3( xxo+xx*ss,    0.0, yyo+yy*ss),   0.5, material_right));
 	    }
     }
@@ -234,6 +260,12 @@ hittable_list final_scene() {
     objects.add(make_shared<bvh_node>(spheres, 0, 1));
 
     return objects;
+}
+
+hittable_list final_scene_lights(){
+    // an empty hittable list gives importance sampling with cosine distribution over the normal-hemisphere
+    hittable_list lights;
+    return lights;
 }
 
 int main(int argc, char** argv)
@@ -292,8 +324,12 @@ int main(int argc, char** argv)
 	// world
 	//
 	world=final_scene();
+	lights = make_shared<hittable_list>(final_scene_lights());
 
-
+	auto background_skybox = make_shared<image_texture>("studio.hdr");
+	background = background_skybox;
+	background_pdf = make_shared<image_pdf>(background_skybox);
+	
 
 	// cam
 	
@@ -324,6 +360,7 @@ int main(int argc, char** argv)
 		int tt = (int)t;
 				
 		float scale = 1.0 / samples_per_pixel;
+		auto inv_gamma = 1./2.2f;
 
 		if (fe == 0) 
 		{
@@ -372,7 +409,7 @@ int main(int argc, char** argv)
 		lookat.z(a_z);
 
 		cam.set_transform(lookfrom,lookat,float(sync_get_val(cam_fov, row)));
-		
+/*		
 		float cyc = float(sync_get_val(effu1,row));
 		int i = 0;
 		 for (auto obu : world.objects) {
@@ -382,12 +419,23 @@ int main(int argc, char** argv)
 			 float ge = sin(i+cyc*0.001)*0.3;
 			 float be = cos(i+cyc*0.002)*0.1;
     			auto material_right  = make_shared<metal>(color(0.7-re, 0.2+ge, 0.8-be));
-			 obu->mat_ptr = material_right;
 		 }
+*/
 
-		#pragma omp parallel for collapse(2)
+
+		const int N_THREADS = 16;
+		const int CHUNKS_PER_THREAD = 3;
+
+		int global_done_scanlines=0;
+		#pragma omp parallel num_threads(N_THREADS)
+		{
+		srand(int(time(NULL))^ omp_get_thread_num());
+		#pragma omp for schedule(dynamic, h/(N_THREADS*CHUNKS_PER_THREAD))
 		for(int y=yo;y<h;y+=2) 
 		{
+			
+			#pragma omp atomic
+			++global_done_scanlines;
 			for(int x=xo;x<w;x+=2)
 			{
 				int i = y*w+x;
@@ -398,11 +446,12 @@ int main(int argc, char** argv)
 	
 				pixel = (pixel + prev[i])*vec3(0.5,0.5,0.5);
 				prev[i] = pixel;
-				int r = sqrt(pixel.x()*scale)*255; 
-				int g = sqrt(pixel.y()*scale)*255; 
-				int b = sqrt(pixel.z()*scale)*255; 
+				int r = clamp(pow(pixel.x()*scale, inv_gamma),0.0,0.999)*256; 
+				int g = clamp(pow(pixel.y()*scale, inv_gamma),0.0,0.999)*256; 
+				int b = clamp(pow(pixel.z()*scale, inv_gamma),0.0,0.999)*256; 
 				raytraced[i] = MAKE_RGB(r,g,b);
 			}
+		}
 		}
 
 		bilinear(pixels,raytraced,w,h,xres,yres);
