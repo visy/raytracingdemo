@@ -3,8 +3,10 @@
 #include "sphere.h"
 #include "camera.h"
 #include "material.h"
+#include "aarect.h"
 #include "bvh.h"
 #include "pdf.h"
+#include "my_stb_obj_loader.h"
 #include "pixie.h"
 #include "bass.h"
 #include "sync.h"
@@ -207,12 +209,11 @@ point3 lookat(0,0,-1);
 int xres = 1280;
 int yres = 720;
 auto aspect_ratio = 16.0 / 9.0;
-int image_width = 360;
-int max_depth = 3;
+int image_width = 480;
+int max_depth = 8;
 float aperture = 0.0;
-float dist_to_focus = 10.0;
-int samples_per_pixel = 16;
-
+float dist_to_focus = 100.0;
+int samples_per_pixel = 2;
 camera cam(lookfrom, lookat, vec3(0,1,0), 75, aspect_ratio, aperture, dist_to_focus, 0.0, 1.0);
 
 shared_ptr<texture> background;
@@ -240,26 +241,30 @@ hittable_list final_scene() {
 
 	hittable_list spheres;
 
-// 	spheres.add(make_shared<sphere>(point3( 0.0, -100.5, -1.0), 100.0, make_shared<lambertian>(checker)));
+// 	spheres.add(make_shared<sphere>(point3( 0.0, -100.5, -1.0), 100.0, material_center));
 
 	float ss = 1;
 	float xxo = -4;
 	float yyo = -4;
-    for (int yy = 0; yy < 8; yy++) {
-	    for (int xx = 0; xx < 8; xx++) {
-			 float re = cos((xx+yy)*0.5)*0.2;
-			 float ge = sin((xx+yy)*0.1)*0.3;
-			 float be = cos((xx+yy)*0.2)*0.1;
-			 auto fuzz = random_double(0, 0.5);
-		auto material_right  = make_shared<metal>(color(0.5-re,0.5-ge,0.5-be), fuzz);
-		spheres.add(make_shared<sphere>(point3( xxo+xx*ss,    0.0, yyo+yy*ss),   0.5, material_right));
+	float zzo = 8;
+    for (int zz = 9; zz > 0; zz--) {
+	    int zo = 9-zz;
+	    for (int yy = zo; yy < 9-zo; yy++) {
+		    for (int xx = zo; xx < 9-zo; xx++) {
+				 float re = cos((xx+yy)*0.5)*0.2;
+				 float ge = sin((xx+zz)*0.1)*0.3;
+				 float be = cos((xx+yy)*0.2)*0.1;
+				 auto fuzz = random_double(0, 0.0);
+			auto material_right  = make_shared<metal>(color(0.5-re,0.5-ge,0.5-be), fuzz);
+			spheres.add(make_shared<sphere>(point3( xxo+xx*(ss),    zzo-zz*ss, yyo+yy*(ss)),   0.5, material_right));
+		    }
 	    }
     }
+      
+    hittable_list ff;
+    ff.add(make_shared<bvh_node>(spheres, 0, 1));
 
-        hittable_list objects;
-    objects.add(make_shared<bvh_node>(spheres, 0, 1));
-
-    return objects;
+    return ff;
 }
 
 hittable_list final_scene_lights(){
@@ -285,7 +290,7 @@ int main(int argc, char** argv)
 		return 0;
 	}
 
-	stream = BASS_StreamCreateFile(FALSE, "music.wav", 0, 0, BASS_STREAM_PRESCAN);
+	stream = BASS_StreamCreateFile(FALSE, "music.ogg", 0, 0, BASS_STREAM_PRESCAN);
 	if (!stream) {
 		return 0;
 	}
@@ -326,7 +331,7 @@ int main(int argc, char** argv)
 	world=final_scene();
 	lights = make_shared<hittable_list>(final_scene_lights());
 
-	auto background_skybox = make_shared<image_texture>("studio.hdr");
+	auto background_skybox = make_shared<image_texture>("sky.hdr");
 	background = background_skybox;
 	background_pdf = make_shared<image_pdf>(background_skybox);
 	
@@ -422,20 +427,9 @@ int main(int argc, char** argv)
 		 }
 */
 
-
-		const int N_THREADS = 16;
-		const int CHUNKS_PER_THREAD = 3;
-
-		int global_done_scanlines=0;
-		#pragma omp parallel num_threads(N_THREADS)
-		{
-		srand(int(time(NULL))^ omp_get_thread_num());
-		#pragma omp for schedule(dynamic, h/(N_THREADS*CHUNKS_PER_THREAD))
+		#pragma omp parallel for schedule(dynamic)
 		for(int y=yo;y<h;y+=2) 
 		{
-			
-			#pragma omp atomic
-			++global_done_scanlines;
 			for(int x=xo;x<w;x+=2)
 			{
 				int i = y*w+x;
@@ -451,7 +445,6 @@ int main(int argc, char** argv)
 				int b = clamp(pow(pixel.z()*scale, inv_gamma),0.0,0.999)*256; 
 				raytraced[i] = MAKE_RGB(r,g,b);
 			}
-		}
 		}
 
 		bilinear(pixels,raytraced,w,h,xres,yres);

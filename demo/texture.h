@@ -82,12 +82,6 @@ class image_texture: public texture {
 
         image_texture(const char* filename){
             auto components_per_pixel = 3;
-            std::cerr << "Loading image texture from: '" << filename << "' as ";
-            if (stbi_is_hdr(filename)){
-                std::cerr << "HDR file.\n";
-            } else {
-                std::cerr << "gamma-corrected file.\n";
-            }
             data = stbi_loadf(filename, &width, &height, &components_per_pixel, components_per_pixel);
 
             if (!data){

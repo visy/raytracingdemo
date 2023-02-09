@@ -4,7 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
-
+#include <random>
 
 // Usings
 
@@ -17,15 +17,19 @@ using std::sqrt;
 const double infinity = std::numeric_limits<double>::infinity();
 const double pi = 3.1415926535897932385;
 
+static std::mt19937 engine;
+static std::uniform_real_distribution<double> uniformDist(0.0, 1.0);
+
 // Utility Functions
 
 inline double degrees_to_radians(double degrees) {
     return degrees * pi / 180.0;
 }
 
+
+
 inline double random_double() {
-    // Returns a random real in [0,1).
-    return rand() / (RAND_MAX + 1.0);
+    return uniformDist(engine);
 }
 
 inline double random_double(double min, double max) {
