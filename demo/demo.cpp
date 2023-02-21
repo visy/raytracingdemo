@@ -210,10 +210,10 @@ int xres = 1280;
 int yres = 720;
 auto aspect_ratio = 16.0 / 9.0;
 int image_width = 480;
-int max_depth = 7;
+int max_depth = 4;
 float aperture = 0.0;
 float dist_to_focus = 100.0;
-int samples_per_pixel = 2;
+int samples_per_pixel = 3;
 camera cam(lookfrom, lookat, vec3(0,1,0), 75, aspect_ratio, aperture, dist_to_focus, 0.0, 1.0);
 
 shared_ptr<texture> background;
@@ -325,6 +325,7 @@ int main(int argc, char** argv)
 	prev = (color*)malloc(w*h*sizeof(color));
 
 	raytraced = (uint32_t*)malloc(w*h*sizeof(uint32_t));
+	memset(raytraced,0,w*h);
 
 	// world
 	//
@@ -346,7 +347,6 @@ int main(int argc, char** argv)
 
 	BASS_Start();	
 	BASS_ChannelPlay(stream, FALSE);
-
 
 	while (!window.HasKeyGoneUp(Pixie::Key_Escape))
 	{
@@ -370,27 +370,15 @@ int main(int argc, char** argv)
 		if (fe == 0) 
 		{
 			xo = 0;
-			yo = 0;
 		}
 		if (fe == 1) 
 		{
 			xo = 1;
-			yo = 1;
-		}
-		if (fe == 2) 
-		{
-			xo = 0;
-			yo = 1;
-		}
-		if (fe == 3) 
-		{
-			xo = 1;
-			yo = 0;
 		}
 
 		fe++;
 
-		fe = fe % 4;
+		fe = fe % 2;
 
 		// 
 		c_r =(float(sync_get_val(clear_r, row)));
@@ -428,11 +416,11 @@ int main(int argc, char** argv)
 */
 
 		#pragma omp parallel for schedule(dynamic)
-		for(int y=yo;y<h;y+=2) 
+		for(int y=20;y<250;y+=1) 
 		{
-			for(int x=xo;x<w;x+=2)
+			for(int x=0;x<480;x+=1)
 			{
-				int i = y*w+x;
+				int i = y*480+x;
 
 				color pixel(0,0,0);
 

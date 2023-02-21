@@ -172,5 +172,7 @@ vec3 refract(const vec3& uv, const vec3& n, double eta_prime_over_eta){
     return r_out_perp+r_out_parallel;
 }
 
+#pragma omp declare reduction(+ : vec3 : omp_out+=omp_in) initializer(omp_priv(0,0,0))
+
 #endif
 
