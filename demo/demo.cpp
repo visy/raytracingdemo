@@ -1,3 +1,5 @@
+#include <WinSock2.h>
+#include <Ws2tcpip.h>
 #include "common.h"
 #include "hittable_list.h"
 #include "sphere.h"
@@ -13,6 +15,7 @@
 
 #include <omp.h>
 #include <time.h>
+
 
 static const float bpm = 150.0f; /* beats per minute */
 static const int rpb = 8; /* rows per beat */
@@ -209,11 +212,11 @@ point3 lookat(0,0,-1);
 int xres = 1280;
 int yres = 720;
 auto aspect_ratio = 16.0 / 9.0;
-int image_width = 480;
-int max_depth = 4;
+int image_width = 360;
+int max_depth = 5;
 float aperture = 0.0;
 float dist_to_focus = 100.0;
-int samples_per_pixel = 3;
+int samples_per_pixel = 4;
 camera cam(lookfrom, lookat, vec3(0,1,0), 75, aspect_ratio, aperture, dist_to_focus, 0.0, 1.0);
 
 shared_ptr<texture> background;
@@ -247,15 +250,18 @@ hittable_list final_scene() {
 	float xxo = -4;
 	float yyo = -4;
 	float zzo = 8;
-    for (int zz = 9; zz > 0; zz--) {
+    for (int zz = 15; zz > 3; zz--) {
 	    int zo = 9-zz;
+	    if (zz > 9) {
+		 zo = zz-9; 
+	    }
 	    for (int yy = zo; yy < 9-zo; yy++) {
 		    for (int xx = zo; xx < 9-zo; xx++) {
-				 float re = cos((xx+yy)*0.5)*0.2;
-				 float ge = sin((xx+zz)*0.1)*0.3;
-				 float be = cos((xx+yy)*0.2)*0.1;
+				 float re = cos((zz+yy)*0.4)*0.1;
+				 float ge = sin((xx+zz)*0.2)*0.1;
+				 float be = cos((xx+yy)*0.4)*0.1;
 				 auto fuzz = random_double(0, 0.0);
-			auto material_right  = make_shared<metal>(color(0.5-re,0.5-ge,0.5-be), fuzz);
+			auto material_right  = make_shared<metal>(color(1.0-re,1.0-ge,1.0-be), fuzz);
 			spheres.add(make_shared<sphere>(point3( xxo+xx*(ss),    zzo-zz*ss, yyo+yy*(ss)),   0.5, material_right));
 		    }
 	    }
@@ -272,6 +278,16 @@ hittable_list final_scene_lights(){
     hittable_list lights;
     return lights;
 }
+
+int bg_prev = 0;
+
+#define SERVER "valot.instanssi"
+#define BUFLEN 512  // max length of answer
+#define PORT 9909  // the port on which to listen for incoming data
+
+int vr[22] = {0};
+int vg[22] = {0};
+int vb[22] = {0};
 
 int main(int argc, char** argv)
 {
@@ -314,6 +330,7 @@ int main(int argc, char** argv)
 	const sync_track *cam_at_z = sync_get_track(rocket, "at.z");
 	const sync_track *cam_fov = sync_get_track(rocket, "fov");
 	const sync_track *effu1 = sync_get_track(rocket, "effu1");
+	const sync_track *bg = sync_get_track(rocket, "bg");
 
 	Pixie::Window window;
 
@@ -332,9 +349,11 @@ int main(int argc, char** argv)
 	world=final_scene();
 	lights = make_shared<hittable_list>(final_scene_lights());
 
-	auto background_skybox = make_shared<image_texture>("sky.hdr");
-	background = background_skybox;
-	background_pdf = make_shared<image_pdf>(background_skybox);
+	auto background_sky = make_shared<image_texture>("sky.hdr");
+	auto background_moon = make_shared<image_texture>("moon.hdr");
+	auto background_street = make_shared<image_texture>("street.hdr");
+	background = background_sky;
+	background_pdf = make_shared<image_pdf>(background_sky);
 	
 
 	// cam
@@ -344,6 +363,26 @@ int main(int argc, char** argv)
 	{
 		return 0;
 	}
+
+	WSADATA wsaData;
+	int res = WSAStartup(MAKEWORD(2, 2), &wsaData);
+	if (res != NO_ERROR) {
+	    return 0;
+	}
+
+	sockaddr_in server;
+	int client_socket;
+	if ((client_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == SOCKET_ERROR) // <<< UDP socket
+	{
+		return 2;
+	}
+
+	// setup address structure
+	memset((char*)&server, 0, sizeof(server));
+	server.sin_family = AF_INET;
+	server.sin_port = htons(PORT);
+	server.sin_addr.S_un.S_addr = inet_addr(SERVER);
+
 
 	BASS_Start();	
 	BASS_ChannelPlay(stream, FALSE);
@@ -393,6 +432,8 @@ int main(int argc, char** argv)
 		float a_y =(float(sync_get_val(cam_at_y, row)));
 		float a_z =(float(sync_get_val(cam_at_z, row)));
 		
+		int bg_value =(int(sync_get_val(bg, row)));
+		
 		lookfrom.x(f_x);
 		lookfrom.y(f_y);
 		lookfrom.z(f_z);
@@ -402,6 +443,22 @@ int main(int argc, char** argv)
 		lookat.z(a_z);
 
 		cam.set_transform(lookfrom,lookat,float(sync_get_val(cam_fov, row)));
+
+		if (bg_value == 0 && bg_prev != bg_value) {
+			background = background_sky;
+			background_pdf = make_shared<image_pdf>(background_sky);
+			bg_prev = bg_value;
+		}
+		if (bg_value == 1 && bg_prev != bg_value) {
+			background = background_moon;
+			background_pdf = make_shared<image_pdf>(background_moon);
+			bg_prev = bg_value;
+		}
+		if (bg_value == 2 && bg_prev != bg_value) {
+			background = background_street;
+			background_pdf = make_shared<image_pdf>(background_street);
+			bg_prev = bg_value;
+		}
 /*		
 		float cyc = float(sync_get_val(effu1,row));
 		int i = 0;
@@ -416,11 +473,11 @@ int main(int argc, char** argv)
 */
 
 		#pragma omp parallel for schedule(dynamic)
-		for(int y=20;y<250;y+=1) 
+		for(int y=0;y<202;y+=1) 
 		{
-			for(int x=0;x<480;x+=1)
+			for(int x=0;x<360;x+=1)
 			{
-				int i = y*480+x;
+				int i = y*360+x;
 
 				color pixel(0,0,0);
 
@@ -435,9 +492,94 @@ int main(int argc, char** argv)
 			}
 		}
 
+
+		int scs[44] = {
+			140,20,
+			100,20,
+			20,20,
+			0,0,
+			0,40,
+			0,80,
+			0,140,
+			0,180,
+			20,180,
+			40,180,
+			60,180,
+			100,180,
+			140,180,
+			220,180,
+			280,180,
+			280,140,
+			280,80,
+			280,40,
+			280,20,
+			220,20,
+			140,20,
+			100,20
+		};
+
+		for(int j=0;j<22;j++) {
+			int rinc = 0;
+			int ginc = 0;
+			int binc = 0;
+			int zx = scs[(j*2)];
+			int zy = scs[(j*2)+1];
+			for(int yy=0;yy<8;yy++) {
+			for(int xx=0;xx<8;xx++) {
+			int i = (zy+yy)*360+(zx+xx);
+			color pixel = prev[i];
+			rinc += clamp(pow(pixel.x()*scale, inv_gamma),0.0,0.999)*256; 
+			ginc += clamp(pow(pixel.y()*scale, inv_gamma),0.0,0.999)*256; 
+			binc += clamp(pow(pixel.z()*scale, inv_gamma),0.0,0.999)*256; 
+			}
+			}
+			vr[j] = rinc/64;
+			vg[j] = ginc/64;
+			vb[j] = binc/64;
+		}
 		bilinear(pixels,raytraced,w,h,xres,yres);
 
+		// update lights
+		unsigned char message[157] = { 
+		1, 0, 113, 117, 97, 100, 0, 
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0,
+		0,0,0,0,0,0};
+
+		for(int i = 0;i<22;i++) 
+		{
+			message[7+(i*6)+0] = 1; // valo
+			message[7+(i*6)+1] = i; // index
+			message[7+(i*6)+2] = 0; // extension
+			message[7+(i*6)+3] = vr[i]; // r
+			message[7+(i*6)+4] = vg[i]; // g
+			message[7+(i*6)+5] = vb[i]; // b
+
+		}
 		
+		sendto(client_socket, message, 157, 0, (sockaddr*)&server, sizeof(sockaddr_in));
 		if (!window.Update())
 		{
 			break;
@@ -452,5 +594,7 @@ int main(int argc, char** argv)
 
 	BASS_StreamFree(stream);
 	BASS_Free();
+	closesocket(client_socket);
+	WSACleanup();
 	window.Close();
 }

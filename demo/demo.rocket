@@ -148,6 +148,26 @@
 			<key value="10000" interpolation="1" row="1828"/>
 			<key value="20000" interpolation="0" row="1988"/>
 		</track>
+		<track name="bg">
+			<key value="2" interpolation="0" row="0"/>
+			<key value="1" interpolation="0" row="641"/>
+			<key value="0" interpolation="0" row="718"/>
+			<key value="1" interpolation="0" row="955"/>
+			<key value="2" interpolation="0" row="989"/>
+			<key value="0" interpolation="0" row="1028"/>
+			<key value="2" interpolation="0" row="1049"/>
+			<key value="0" interpolation="0" row="1070"/>
+			<key value="2" interpolation="0" row="1089"/>
+			<key value="0" interpolation="0" row="1149"/>
+			<key value="1" interpolation="0" row="1168"/>
+			<key value="2" interpolation="0" row="1189"/>
+			<key value="0" interpolation="0" row="1209"/>
+			<key value="1" interpolation="0" row="1228"/>
+			<key value="2" interpolation="0" row="1248"/>
+			<key value="1" interpolation="0" row="1271"/>
+			<key value="0" interpolation="0" row="1273"/>
+			<key value="2" interpolation="0" row="2088"/>
+		</track>
 	</tracks>
 	<bookmarks/>
 </sync>

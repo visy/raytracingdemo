@@ -1,0 +1,484 @@
+#include <iostream>
+#include <time.h>
+#include <float.h>
+#include <curand_kernel.h>
+
+#include "vec3.h"
+#include "ray.h"
+#include "sphere.h"
+#include "hitable_list.h"
+#include "camera.h"
+#include "material.h"
+
+#include "pixie.h"
+#include "bass.h"
+#include "sync.h"
+
+#include <omp.h>
+#include <time.h>
+
+static const float bpm = 150.0f; /* beats per minute */
+static const int rpb = 8; /* rows per beat */
+static const double row_rate = (double(bpm) / 60) * rpb;
+
+static double bass_get_row(HSTREAM h)
+{
+	QWORD pos = BASS_ChannelGetPosition(h, BASS_POS_BYTE);
+	double time = BASS_ChannelBytes2Seconds(h, pos);
+	return time * row_rate;
+}
+
+#define SYNC_PLAYER
+
+#ifndef SYNC_PLAYER
+
+static void bass_pause(void *d, int flag)
+{
+	HSTREAM h = *((HSTREAM *)d);
+	if (flag)
+		BASS_ChannelPause(h);
+	else
+		BASS_ChannelPlay(h, false);
+}
+
+static void bass_set_row(void *d, int row)
+{
+	HSTREAM h = *((HSTREAM *)d);
+	QWORD pos = BASS_ChannelSeconds2Bytes(h, row / row_rate);
+	BASS_ChannelSetPosition(h, pos, BASS_POS_BYTE);
+}
+
+static int bass_is_playing(void *d)
+{
+	HSTREAM h = *((HSTREAM *)d);
+	return BASS_ChannelIsActive(h) == BASS_ACTIVE_PLAYING;
+}
+
+static struct sync_cb bass_cb = {
+	bass_pause,
+	bass_set_row,
+	bass_is_playing
+};
+
+#endif
+
+
+int w = 0;
+int h = 0;
+float t = 0;
+float c_r,c_g,c_b=1;
+
+
+// limited version of checkCudaErrors from helper_cuda.h in CUDA examples
+#define checkCudaErrors(val) check_cuda( (val), #val, __FILE__, __LINE__ )
+
+void check_cuda(cudaError_t result, char const *const func, const char *const file, int const line) {
+    if (result) {
+        std::cerr << "CUDA error = " << static_cast<unsigned int>(result) << " at " <<
+            file << ":" << line << " '" << func << "' \n";
+        // Make sure we call CUDA Device Reset before exiting
+        cudaDeviceReset();
+        exit(99);
+    }
+}
+
+__device__ vec3 color(const ray& r, hitable **world, curandState *local_rand_state) {
+    ray cur_ray = r;
+    vec3 cur_attenuation = vec3(1.0,1.0,1.0);
+    for(int i = 0; i < 50; i++) {
+        hit_record rec;
+        if ((*world)->hit(cur_ray, 0.001f, FLT_MAX, rec)) {
+            ray scattered;
+            vec3 attenuation;
+            if(rec.mat_ptr->scatter(cur_ray, rec, attenuation, scattered, local_rand_state)) {
+                cur_attenuation *= attenuation;
+                cur_ray = scattered;
+            }
+            else {
+                return vec3(0.0,0.0,0.0);
+            }
+        }
+        else {
+            vec3 unit_direction = unit_vector(cur_ray.direction());
+            float t = 0.5f*(unit_direction.y() + 1.0f);
+            vec3 c = (1.0f-t)*vec3(1.0, 1.0, 1.0) + t*vec3(0.5, 0.7, 1.0);
+            return cur_attenuation * c;
+        }
+    }
+    return vec3(0.0,0.0,0.0); // exceeded recursion
+}
+
+__global__ void rand_init(curandState *rand_state) {
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        curand_init(1984, 0, 0, rand_state);
+    }
+}
+
+__global__ void render_init(int max_x, int max_y, curandState *rand_state) {
+    int i = threadIdx.x + blockIdx.x * blockDim.x;
+    int j = threadIdx.y + blockIdx.y * blockDim.y;
+    if((i >= max_x) || (j >= max_y)) return;
+    int pixel_index = j*max_x + i;
+    // Original: Each thread gets same seed, a different sequence number, no offset
+    // curand_init(1984, pixel_index, 0, &rand_state[pixel_index]);
+    // BUGFIX, see Issue#2: Each thread gets different seed, same sequence for
+    // performance improvement of about 2x!
+    curand_init(1984+pixel_index, 0, 0, &rand_state[pixel_index]);
+}
+
+__global__ void render(vec3 *fb, int max_x, int max_y, int ns, camera **cam, hitable **world, curandState *rand_state) {
+    int i = threadIdx.x + blockIdx.x * blockDim.x;
+    int j = threadIdx.y + blockIdx.y * blockDim.y;
+    if((i >= max_x) || (j >= max_y)) return;
+    int pixel_index = j*max_x + i;
+    curandState local_rand_state = rand_state[pixel_index];
+    vec3 col(0,0,0);
+    for(int s=0; s < ns; s++) {
+        float u = float(i + curand_uniform(&local_rand_state)) / float(max_x);
+        float v = float(j + curand_uniform(&local_rand_state)) / float(max_y);
+        ray r = (*cam)->get_ray(u, v, &local_rand_state);
+        col += vec3(r, world, &local_rand_state);
+    }
+    rand_state[pixel_index] = local_rand_state;
+    col /= float(ns);
+    col[0] = sqrt(col[0]);
+    col[1] = sqrt(col[1]);
+    col[2] = sqrt(col[2]);
+    fb[pixel_index] = col;
+}
+
+#define RND (curand_uniform(&local_rand_state))
+
+
+
+void bilinear(uint32_t* pd, uint32_t* pixels, int widthSource, int heightSource, int width, int height)
+{
+    float xs = (float)widthSource / width;
+    float ys = (float)heightSource / height;
+
+    float fracx, fracy, ifracx, ifracy, sx, sy, l0, l1, rf, gf, bf;
+    int c, x0, x1, y0, y1;
+    byte c1a, c1r, c1g, c1b, c2a, c2r, c2g, c2b, c3a, c3r, c3g, c3b, c4a, c4r, c4g, c4b;
+    byte a, r, g, b;
+
+    // Bilinear
+    int srcIdx = 0;
+
+    for (int y = 0; y < height; y++)
+    {
+        for (int x = 0; x < width; x++)
+        {
+            sx = x * xs;
+            sy = y * ys;
+            x0 = (int)sx;
+            y0 = (int)sy;
+
+            // Calculate coordinates of the 4 interpolation points
+            fracx = sx - x0;
+            fracy = sy - y0;
+            ifracx = 1.0f - fracx;
+            ifracy = 1.0f - fracy;
+            x1 = x0 + 1;
+            if (x1 >= widthSource)
+            {
+                x1 = x0;
+            }
+            y1 = y0 + 1;
+            if (y1 >= heightSource)
+            {
+                y1 = y0;
+            }
+
+            // Read source vec3
+            c = pixels[y0 * widthSource + x0];
+            c1a = (byte)(c >> 24);
+            c1r = (byte)(c >> 16);
+            c1g = (byte)(c >> 8);
+            c1b = (byte)(c);
+
+            c = pixels[y0 * widthSource + x1];
+            c2a = (byte)(c >> 24);
+            c2r = (byte)(c >> 16);
+            c2g = (byte)(c >> 8);
+            c2b = (byte)(c);
+
+            c = pixels[y1 * widthSource + x0];
+            c3a = (byte)(c >> 24);
+            c3r = (byte)(c >> 16);
+            c3g = (byte)(c >> 8);
+            c3b = (byte)(c);
+
+            c = pixels[y1 * widthSource + x1];
+            c4a = (byte)(c >> 24);
+            c4r = (byte)(c >> 16);
+            c4g = (byte)(c >> 8);
+            c4b = (byte)(c);
+
+            // Calculate vec3s
+            // Alpha
+            l0 = ifracx * c1a + fracx * c2a;
+            l1 = ifracx * c3a + fracx * c4a;
+
+                // Red
+                l0 = ifracx * c1r + fracx * c2r;
+                l1 = ifracx * c3r + fracx * c4r;
+                rf = ifracy * l0 + fracy * l1;
+
+                // Green
+                l0 = ifracx * c1g + fracx * c2g;
+                l1 = ifracx * c3g + fracx * c4g;
+                gf = ifracy * l0 + fracy * l1;
+
+                // Blue
+                l0 = ifracx * c1b + fracx * c2b;
+                l1 = ifracx * c3b + fracx * c4b;
+                bf = ifracy * l0 + fracy * l1;
+
+                // Cast to byte
+                r = (byte)((rf));
+                g = (byte)((gf));
+                b = (byte)((bf));
+
+                pd[srcIdx++] = MAKE_RGB(r,g,b);
+        }
+    }
+}
+
+vec3* prev;
+uint32_t* raytraced;
+
+int fe,xo,yo = 0;
+hittable_list world;
+shared_ptr<hittable_list> lights;
+point3 lookfrom(-2,2,5);
+point3 lookat(0,0,-1);
+int xres = 1280;
+int yres = 720;
+auto aspect_ratio = 16.0 / 9.0;
+int image_width = 480;
+int max_depth = 4;
+float aperture = 0.0;
+float dist_to_focus = 100.0;
+int samples_per_pixel = 3;
+camera cam(lookfrom, lookat, vec3(0,1,0), 75, aspect_ratio, aperture, dist_to_focus, 0.0, 1.0);
+
+
+__global__ void create_world(hitable **d_list, hitable **d_world, int nx, int ny, curandState *rand_state) {
+
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        curandState local_rand_state = *rand_state;
+
+	int i = 0;
+	float ss = 1;
+	float xxo = -4;
+	float yyo = -4;
+	float zzo = 8;
+	    for (int zz = 9; zz > 0; zz--) {
+		    int zo = 9-zz;
+		    for (int yy = zo; yy < 9-zo; yy++) {
+			    for (int xx = zo; xx < 9-zo; xx++) {
+					 float re = cos((xx+yy)*0.5)*0.2;
+					 float ge = sin((xx+zz)*0.1)*0.3;
+					 float be = cos((xx+yy)*0.2)*0.1;
+					 auto fuzz = random_double(0, 0.0);
+				auto material_right  = make_shared<metal>(vec3(0.5-re,0.5-ge,0.5-be), fuzz);
+				d_list[i++].add(make_shared<sphere>(point3( xxo+xx*(ss),    zzo-zz*ss, yyo+yy*(ss)),   0.5, material_right));
+			    }
+		    }
+	    }
+
+		*rand_state = local_rand_state;	    
+		*d_world  = new hitable_list(d_list, 22*22);
+
+    }
+}
+
+__global__ void free_world(hitable **d_list, hitable **d_world, camera **d_camera) {
+    for(int i=0; i < 22*22+1+3; i++) {
+        delete ((sphere *)d_list[i])->mat_ptr;
+        delete d_list[i];
+    }
+    delete *d_world;
+}
+
+int main(int argc, char** argv)
+{
+	HSTREAM stream;
+	DWORD chan, act, level;
+	QWORD pos;
+	double secs;
+	int a, filep, device = -1;
+	BASS_CHANNELINFO info;
+
+	if (HIWORD(BASS_GetVersion()) != BASSVERSION) {
+		return 0;
+	}
+
+	if (!BASS_Init(device, 48000, 0, 0, NULL)) {
+		return 0;
+	}
+
+	stream = BASS_StreamCreateFile(FALSE, "music.ogg", 0, 0, BASS_STREAM_PRESCAN);
+	if (!stream) {
+		return 0;
+	}
+
+	sync_device *rocket = sync_create_device("sync");
+
+#ifndef SYNC_PLAYER
+	if (sync_tcp_connect(rocket, "localhost", SYNC_DEFAULT_PORT)) {
+		return 0;
+	}
+#endif
+
+	const sync_track *clear_r = sync_get_track(rocket, "clear.r");
+	const sync_track *clear_g = sync_get_track(rocket, "clear.g");
+	const sync_track *clear_b = sync_get_track(rocket, "clear.b");
+	const sync_track *cam_from_x = sync_get_track(rocket, "from.x");
+	const sync_track *cam_from_y = sync_get_track(rocket, "from.y");
+	const sync_track *cam_from_z = sync_get_track(rocket, "from.z");
+	const sync_track *cam_at_x = sync_get_track(rocket, "at.x");
+	const sync_track *cam_at_y = sync_get_track(rocket, "at.y");
+	const sync_track *cam_at_z = sync_get_track(rocket, "at.z");
+	const sync_track *cam_fov = sync_get_track(rocket, "fov");
+	const sync_track *effu1 = sync_get_track(rocket, "effu1");
+
+	Pixie::Window window;
+
+	int image_height = static_cast<int>(image_width / aspect_ratio);
+
+	w = image_width;
+	h = image_height;
+
+	prev = (vec3*)malloc(w*h*sizeof(vec3));
+
+	raytraced = (uint32_t*)malloc(w*h*sizeof(uint32_t));
+	memset(raytraced,0,w*h);
+
+	// world
+	//
+	world=final_scene();
+	lights = make_shared<hittable_list>(final_scene_lights());
+
+	auto background_skybox = make_shared<image_texture>("sky.hdr");
+	background = background_skybox;
+	background_pdf = make_shared<image_pdf>(background_skybox);
+	
+
+	// cam
+	
+
+	if (!window.Open("Demo or die", xres, yres, DEMO_FULLSCREEN)) 
+	{
+		return 0;
+	}
+
+	BASS_Start();	
+	BASS_ChannelPlay(stream, FALSE);
+
+	while (!window.HasKeyGoneUp(Pixie::Key_Escape))
+	{
+		double row = bass_get_row(stream);
+
+#ifndef SYNC_PLAYER
+		if (sync_update(rocket, (int)floor(row), &bass_cb, (void *)&stream))
+			sync_tcp_connect(rocket, "localhost", SYNC_DEFAULT_PORT);
+#endif
+
+		uint32_t* pixels = window.GetPixels();
+	
+		// ..draw pixels!
+		float delta = window.GetDelta();
+		t=t+delta*1000;
+		int tt = (int)t;
+				
+		float scale = 1.0 / samples_per_pixel;
+		auto inv_gamma = 1./2.2f;
+
+		if (fe == 0) 
+		{
+			xo = 0;
+		}
+		if (fe == 1) 
+		{
+			xo = 1;
+		}
+
+		fe++;
+
+		fe = fe % 2;
+
+		// 
+		c_r =(float(sync_get_val(clear_r, row)));
+		c_g =(float(sync_get_val(clear_g, row)));
+		c_b =(float(sync_get_val(clear_b, row)));
+		
+		float f_x =(float(sync_get_val(cam_from_x, row)));
+		float f_y =(float(sync_get_val(cam_from_y, row)));
+		float f_z =(float(sync_get_val(cam_from_z, row)));
+		
+		float a_x =(float(sync_get_val(cam_at_x, row)));
+		float a_y =(float(sync_get_val(cam_at_y, row)));
+		float a_z =(float(sync_get_val(cam_at_z, row)));
+		
+		lookfrom.x(f_x);
+		lookfrom.y(f_y);
+		lookfrom.z(f_z);
+		
+		lookat.x(a_x);
+		lookat.y(a_y);
+		lookat.z(a_z);
+
+		cam.set_transform(lookfrom,lookat,float(sync_get_val(cam_fov, row)));
+/*		
+		float cyc = float(sync_get_val(effu1,row));
+		int i = 0;
+		 for (auto obu : world.objects) {
+			 i++;
+			 if (i == 1) continue;
+			 float re = cos(i+cyc*0.005)*0.2;
+			 float ge = sin(i+cyc*0.001)*0.3;
+			 float be = cos(i+cyc*0.002)*0.1;
+    			auto material_right  = make_shared<metal>(vec3(0.7-re, 0.2+ge, 0.8-be));
+		 }
+*/
+
+		#pragma omp parallel for schedule(dynamic)
+		for(int y=20;y<250;y+=1) 
+		{
+			for(int x=0;x<480;x+=1)
+			{
+				int i = y*480+x;
+
+				vec3 pixel(0,0,0);
+
+				pixel = render_samples(x,y,w,h);
+	
+				pixel = (pixel + prev[i])*vec3(0.5,0.5,0.5);
+				prev[i] = pixel;
+				int r = clamp(pow(pixel.x()*scale, inv_gamma),0.0,0.999)*256; 
+				int g = clamp(pow(pixel.y()*scale, inv_gamma),0.0,0.999)*256; 
+				int b = clamp(pow(pixel.z()*scale, inv_gamma),0.0,0.999)*256; 
+				raytraced[i] = MAKE_RGB(r,g,b);
+			}
+		}
+
+		bilinear(pixels,raytraced,w,h,xres,yres);
+
+		
+		if (!window.Update())
+		{
+			break;
+		}
+
+		BASS_Update(0);
+	}
+#ifndef SYNC_PLAYER
+	sync_save_tracks(rocket);
+#endif
+	sync_destroy_device(rocket);
+
+	BASS_StreamFree(stream);
+	BASS_Free();
+	window.Close();
+}
