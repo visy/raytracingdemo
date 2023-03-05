@@ -1,9 +1,0 @@
-osallistuva media by quadtrip
-based on "raytracer in a weekend", optimized with OpenMP to run in realtime.
-100% software rendered on the CPU, not even the bilinear scaling is GPU accelerated
-
-code by visy
-music by Seth_Makes_Sounds CC0
-HDRIs from HDRIHaven, CC0
-
-uses pixie by BananaboySam, thanks ^^
